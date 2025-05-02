@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  ml:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./data:/ml/data
+      - ./scripts:/ml/scripts
+    command: ["python", "./scripts/train.py"]
