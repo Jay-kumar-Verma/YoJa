@@ -3,7 +3,7 @@ version: '3.8'
 services:
   backend:
     build:
-      context: ./app
+      context: .
       dockerfile: Dockerfile
     volumes:
       - ./app:/app
@@ -13,6 +13,8 @@ services:
       - db
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/yoga_db
+      - HTTP_PROXY=http://your-proxy:port
+      - HTTPS_PROXY=http://your-proxy:port
 
   db:
     image: postgres:latest
