@@ -12,6 +12,7 @@ import Blog from "./Pages/Blog"
 import Help from "./Pages/Help"
 import Sidebar from "./Pages/Sidebar"
 import Profile from "./Pages/Profile"
+import Cal_Count from "./Pages/Cal_Count"
 
 const App = () => {
   return (
@@ -30,6 +31,7 @@ const App = () => {
       <Route path="/help" element={<Help/>} />
       <Route path="/profile" element={<Profile/>} />
       <Route path="/sidebar" element={<Sidebar/>}/>
+      <Route path="/Cal_Count" element={<Cal_Count />} />
       
 
   </Routes>
