@@ -1,0 +1,56 @@
+# Production Requirements for Django Backend
+# Additional packages for production deployment with security hardening
+
+# Error Tracking and Monitoring
+sentry-sdk[django]==1.38.0      # Error tracking with Django integration
+django-health-check==3.17.0     # Health check endpoints
+
+# Performance Monitoring
+newrelic==9.2.0                 # APM monitoring (optional)
+django-prometheus==2.3.1        # Prometheus metrics
+
+# Production Database Optimizations
+django-connection-pool==1.2.0   # Database connection pooling
+django-db-geventpool==4.0.1     # Gevent database pool
+
+# Security Enhancements
+django-axes==6.1.1              # Brute force protection
+django-defender==0.9.7          # Additional security middleware
+django-session-security==2.6.7   # Session security
+
+# Production Logging
+django-json-logger==2.0.3       # JSON logging for production
+python-json-logger==2.0.7       # Structured logging
+
+# Static Files and Media (Production)
+boto3==1.34.0                   # AWS S3 integration - secure version
+django-storages[s3]==1.14.2     # Cloud storage backends
+
+# Production Server Optimizations
+gevent==23.9.1                  # Async server support
+greenlet==3.0.2                 # Lightweight threading
+
+# SSL and Security Headers
+django-ssl-redirect==1.0.1      # SSL redirect middleware
+django-secure-auth==0.3.0       # Enhanced authentication
+
+# Rate Limiting and DDoS Protection
+django-ratelimit==4.1.0         # Request rate limiting
+django-slowdown==0.2.1          # Slowdown middleware
+
+# Production Configuration
+django-configurations==2.5.0    # Configuration management
+environs[django]==10.3.0        # Environment variable parsing
+
+# Health and Status Monitoring
+django-watchman==1.3.0          # System monitoring
+psutil==5.9.6                   # System resource monitoring
+
+# Background Task Production Setup
+celery[redis]==5.3.4            # Task queue with Redis
+django-celery-beat==2.5.0       # Periodic task scheduler
+django-celery-results==2.5.0    # Task result backend
+
+# Production Database Utilities
+django-migration-linter==5.0.0  # Migration safety checks
+django-querycount==0.8.3        # Query debugging in production

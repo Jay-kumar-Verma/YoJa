@@ -1,0 +1,10 @@
+FastAPI==0.78.0
+uvicorn==0.18.2
+opencv-python==4.5.5.64
+numpy==1.21.6
+pydantic==1.9.0
+scikit-learn==1.0.2
+tensorflow==2.8.0
+psycopg2-binary==2.9.3
+python-multipart==0.0.5
+aiofiles==0.8.0

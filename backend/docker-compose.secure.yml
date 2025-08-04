@@ -1,0 +1,271 @@
+# Enhanced Secure Docker Compose for Backend Service
+# Enterprise-grade security deployment configurations
+
+version: '3.8'
+
+services:
+  # Development deployment - balanced security and convenience
+  backend-service-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/backend-service:dev-secure
+    container_name: backend-service-dev
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=development
+      - LOG_LEVEL=debug
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://user:password@db:5432/yoja_dev
+    volumes:
+      # Development volumes for debugging (read-only for security)
+      - ./logs:/app/logs:rw
+      - ./temp:/tmp/backend-temp:rw
+    user: "nonroot:nonroot"
+    read_only: false  # Allow writes for development
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # Only add necessary capabilities
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - backend-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 1G
+          cpus: '1'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend-dev.rule=Host(`api-dev.localhost`)"
+      - "traefik.http.services.backend-dev.loadbalancer.server.port=8000"
+      - "security.level=development"
+      - "monitoring.enable=true"
+    depends_on:
+      - db
+
+  # Production deployment - maximum security
+  backend-service-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/backend-service:prod-secure
+    container_name: backend-service-prod
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=production
+      - LOG_LEVEL=warning
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://user:password@db:5432/yoja_prod
+      # Security environment variables
+      - SECURE_SSL_REDIRECT=true
+      - SECURE_HSTS_SECONDS=31536000
+      - SECURE_CONTENT_TYPE_NOSNIFF=true
+      - SECURE_BROWSER_XSS_FILTER=true
+    volumes:
+      # Minimal volumes for production
+      - backend-logs:/app/logs:rw
+      - backend-temp:/tmp/backend-temp:rw
+    user: "nonroot:nonroot"
+    read_only: true  # Read-only filesystem for maximum security
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    cap_drop:
+      - ALL  # Drop all capabilities
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    networks:
+      - backend-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4'
+        reservations:
+          memory: 2G
+          cpus: '2'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend-prod.rule=Host(`api.yoja.com`)"
+      - "traefik.http.services.backend-prod.loadbalancer.server.port=8000"
+      - "traefik.http.routers.backend-prod.tls=true"
+      - "traefik.http.routers.backend-prod.tls.certresolver=letsencrypt"
+      - "security.level=production"
+      - "monitoring.enable=true"
+      - "vulnerability.scan=required"
+    depends_on:
+      - db
+
+  # Database service
+  db:
+    image: postgres:15-alpine
+    container_name: backend-db
+    environment:
+      - POSTGRES_DB=yoja_prod
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    user: "postgres"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/run/postgresql:noexec,nosuid,size=100m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d yoja_prod"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - backend-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+    labels:
+      - "security.level=database"
+      - "backup.policy=daily"
+
+  # Testing deployment - isolated and secure
+  backend-service-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/backend-service:test-secure
+    container_name: backend-service-test
+    environment:
+      - ENV=testing
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=sqlite:///test.db
+    user: "nonroot:nonroot"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    network_mode: none  # Isolated network for testing
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+    labels:
+      - "security.level=testing"
+      - "isolation.level=maximum"
+
+# Secure network configuration
+networks:
+  backend-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+    labels:
+      - "security.level=isolated"
+      - "network.type=backend-services"
+
+# Persistent volumes with security constraints
+volumes:
+  backend-logs:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1G,uid=65532,gid=65532,mode=0755
+    labels:
+      - "security.level=logs"
+      - "cleanup.policy=7days"
+
+  backend-temp:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=500M,uid=65532,gid=65532,mode=0755
+    labels:
+      - "security.level=temporary"
+      - "cleanup.policy=1hour"
+
+  postgres-data:
+    driver: local
+    labels:
+      - "security.level=database"
+      - "backup.policy=daily"
+
+# Additional security configurations
+x-security-common: &security-common
+  user: "nonroot:nonroot"
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:noexec,nosuid,size=100m
+
+x-healthcheck-common: &healthcheck-common
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# Profiles for different deployment scenarios
+# Usage examples:
+# Development: docker-compose up backend-service-dev db
+# Production: docker-compose --profile production up backend-service-prod db
+# Testing: docker-compose --profile testing up backend-service-test
