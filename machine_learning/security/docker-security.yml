@@ -1,0 +1,67 @@
+# Docker security best practices configuration
+# Use this file with container security scanners
+
+# Security scanning configuration
+security:
+  # Image scanning
+  base_image_scan: true
+  vulnerability_scan: true
+  malware_scan: true
+  
+  # Runtime security
+  non_root_user: true
+  read_only_filesystem: false  # ML models need write access to /ml/logs
+  no_new_privileges: true
+  
+  # Network security
+  network_mode: bridge
+  expose_minimal_ports: true
+  
+  # Resource limits
+  memory_limit: "4g"
+  cpu_limit: "2.0"
+  pids_limit: 1000
+  
+  # File system security
+  tmpfs_mounts:
+    - "/tmp:size=100m,noexec,nosuid,nodev"
+    - "/var/tmp:size=50m,noexec,nosuid,nodev"
+    
+  # Security options
+  security_opt:
+    - "no-new-privileges:true"
+    - "apparmor:docker-default"
+    
+  # Capabilities
+  cap_drop:
+    - "ALL"
+  cap_add:
+    - "SETUID"
+    - "SETGID"
+    
+  # Labels for monitoring
+  labels:
+    - "security.scan=required"
+    - "security.level=high"
+    - "monitoring.enabled=true"
+    
+# Compliance checks
+compliance:
+  cis_docker_benchmark: true
+  nist_guidelines: true
+  owasp_container_security: true
+  
+# Monitoring and logging
+monitoring:
+  log_driver: "json-file"
+  log_options:
+    max-size: "10m"
+    max-file: "3"
+    
+# Health and readiness
+health:
+  enabled: true
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 45s

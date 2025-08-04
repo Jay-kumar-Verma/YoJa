@@ -1,0 +1,149 @@
+# Docker Security Configuration for ML Service
+# This file defines security policies and hardening measures
+
+version: "3.8"
+
+# Security Configuration
+security:
+  # Base Image Security
+  base_images:
+    recommended: "cgr.dev/chainguard/python:3.11"  # Most secure
+    alternatives:
+      - "python:3.11.9-alpine3.19"  # Minimal attack surface
+      - "python:3.11.9-slim-bookworm"  # Debian-based with security patches
+    
+  # Container Security Settings
+  container:
+    user: "nonroot:nonroot"  # For Chainguard
+    # user: "mluser:mluser"  # For custom builds
+    read_only_root: true
+    no_new_privileges: true
+    security_opt:
+      - "no-new-privileges:true"
+      - "seccomp:default"
+    cap_drop:
+      - "ALL"
+    cap_add: []  # No additional capabilities needed
+    
+  # Network Security
+  network:
+    host_binding: "127.0.0.1"  # Only localhost
+    port: 8889
+    protocols:
+      - "tcp"
+    expose_minimal: true
+    
+  # File System Security
+  filesystem:
+    permissions:
+      config: "600"
+      scripts: "750"
+      data: "755"
+      logs: "700"
+    ownership: "nonroot:nonroot"
+    readonly_volumes:
+      - "/etc/passwd"
+      - "/etc/group"
+      
+  # Runtime Security
+  runtime:
+    memory_limit: "2g"
+    cpu_limit: "2"
+    pids_limit: 1024
+    ulimits:
+      nofile: 65536
+      nproc: 32768
+    tmpfs:
+      - "/tmp:noexec,nosuid,size=100m"
+      - "/var/tmp:noexec,nosuid,size=50m"
+      
+  # Environment Security
+  environment:
+    secure_vars:
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONSAFEPATH: "1"
+      PYTHONHASHSEED: "random"
+    forbidden_vars:
+      - "PYTHONPATH=/root"
+      - "PATH=/root"
+      
+  # Health Check Security
+  healthcheck:
+    interval: "30s"
+    timeout: "10s"
+    retries: 3
+    start_period: "45s"
+    test: "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8889/health\").read()'"
+    
+  # Vulnerability Scanning
+  scanning:
+    tools:
+      - "trivy"
+      - "grype"
+      - "snyk"
+    schedule: "daily"
+    fail_on: "high"
+    ignore_unfixed: false
+    
+  # Package Security
+  packages:
+    update_policy: "security_only"
+    pin_versions: true
+    verify_signatures: true
+    trusted_sources:
+      - "pypi.org"
+      - "files.pythonhosted.org"
+    blocked_packages:
+      - "pickle"
+      - "marshal"
+      - "shelve"
+      
+  # Logging Security
+  logging:
+    level: "INFO"
+    format: "json"
+    sensitive_data: "redacted"
+    retention: "30d"
+    
+# Docker Compose Security Override
+services:
+  ml-service:
+    image: "yoja/ml-service:secure"
+    user: "1001:1001"
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
+    networks:
+      - ml_internal
+    volumes:
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 100M
+          mode: 1777
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+        reservations:
+          memory: 1G
+          cpus: "1"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8889/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
+
+networks:
+  ml_internal:
+    driver: bridge
+    internal: true
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

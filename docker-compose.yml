@@ -1,0 +1,383 @@
+# Docker Compose for YoJa - Dual Backend Architecture
+# Supports both Windows and Mac/Linux platforms
+version: '3.8'
+
+services:
+  # Frontend Service (React + Vite)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: base  # Use development target
+    container_name: yoja-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_FASTAPI_URL=http://localhost:8000
+      - REACT_APP_DJANGO_URL=http://localhost:8001
+      - REACT_APP_ML_URL=http://localhost:8889
+      - REACT_APP_WEBSOCKET_URL=ws://localhost:8000/ws
+      - CHOKIDAR_USEPOLLING=true  # For Windows file watching
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Anonymous volume for node_modules
+    depends_on:
+      - fastapi-service
+      - django-service
+    networks:
+      - yoja-network
+    restart: unless-stopped
+
+  # FastAPI Service (Lightweight Operations)
+  fastapi-service:
+    build:
+      context: ./backend/fastapi_service
+      dockerfile: Dockerfile
+      target: base  # Use development target
+    container_name: yoja-fastapi
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_URL=postgresql+asyncpg://adminYoja:Yoja$#@98342@db:5432/yoja_main
+      - REDIS_URL=redis://redis:6379/0
+      - DJANGO_SERVICE_URL=http://django-service:8001
+      - ML_SERVICE_URL=http://ml-service:8889
+      - JWT_SECRET_KEY=your-super-secret-jwt-key
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+    volumes:
+      - ./backend/fastapi_service:/app
+      - fastapi_logs:/app/logs
+    depends_on:
+      - db
+      - redis
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Django REST Service (Heavy Data Operations)
+  django-service:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile
+      target: base  # Use development target
+    container_name: yoja-django
+    ports:
+      - "8001:8001"
+    environment:
+      - DJANGO_SETTINGS_MODULE=yoja_project.settings.development
+      - DATABASE_URL=postgresql://adminYoja:Yoja$#@98342@db:5432/yoja_main
+      - ANALYTICS_DB_URL=postgresql://adminYoja:Yoja$#@98342@analytics-db:5432/yoja_analytics
+      - REDIS_URL=redis://redis:6379/1
+      - FASTAPI_SERVICE_URL=http://fastapi-service:8000
+      - ML_SERVICE_URL=http://ml-service:8889
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+    volumes:
+      - ./backend/django_service:/app
+      - django_media:/app/media
+      - django_static:/app/static
+      - django_logs:/app/logs
+    depends_on:
+      - db
+      - analytics-db
+      - redis
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ML Processing Service
+  ml-service:
+    build:
+      context: ./machine_learning
+      dockerfile: Dockerfile
+      target: base  # Use base target for development
+    container_name: yoja-ml
+    ports:
+      - "8888:8888"  # Jupyter notebook
+      - "8889:8889"  # ML API
+    environment:
+      - PYTHONPATH=/ml
+      - MODEL_PATH=/ml/models
+      - DATA_PATH=/ml/data
+      - FASTAPI_SERVICE_URL=http://fastapi-service:8000
+      - JUPYTER_ENABLE_LAB=yes
+      - DATABASE_URL=postgresql://adminYoja:Yoja$#@98342@db:5432/yoja_main
+    volumes:
+      - ./machine_learning:/ml
+      - ml_models:/ml/models
+      - ml_data:/ml/data
+      - ml_logs:/ml/logs
+    depends_on:
+      - fastapi-service
+      - db
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    # Uncomment below for GPU support (NVIDIA Docker required)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # Primary Database (Main Application Data - 350 Tables)
+  db:
+    image: postgres:15-alpine
+    container_name: yoja-db-main
+    environment:
+      - POSTGRES_DB=yoja_main
+      - POSTGRES_USER=adminYoja
+      - POSTGRES_PASSWORD=Yoja$#@98342
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_main_data:/var/lib/postgresql/data
+      - ./database/init_main.sql:/docker-entrypoint-initdb.d/01_init.sql:ro
+      - ./database/create_tables.sql:/docker-entrypoint-initdb.d/02_create_tables.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adminYoja -d yoja_main"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Analytics Database (Analytics & Reporting Data - 100 Tables)
+  analytics-db:
+    image: postgres:15-alpine
+    container_name: yoja-db-analytics
+    environment:
+      - POSTGRES_DB=yoja_analytics
+      - POSTGRES_USER=adminYoja
+      - POSTGRES_PASSWORD=Yoja$#@98342
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_analytics_data:/var/lib/postgresql/data
+      - ./database/init_analytics.sql:/docker-entrypoint-initdb.d/01_init_analytics.sql:ro
+    ports:
+      - "5433:5432"
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adminYoja -d yoja_analytics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Redis Cache & Session Store
+  redis:
+    image: redis:7-alpine
+    container_name: yoja-redis
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # MinIO Object Storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: yoja-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Nginx Load Balancer & Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: yoja-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - frontend
+      - fastapi-service
+      - django-service
+    networks:
+      - yoja-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Celery Worker for Background Tasks (Django)
+  celery-worker:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile
+      target: base
+    container_name: yoja-celery-worker
+    command: celery -A yoja_project worker -l info
+    environment:
+      - DJANGO_SETTINGS_MODULE=yoja_project.settings.development
+      - DATABASE_URL=postgresql://adminYoja:Yoja$#@98342@db:5432/yoja_main
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/3
+    volumes:
+      - ./backend/django_service:/app
+      - celery_logs:/app/logs
+    depends_on:
+      - db
+      - redis
+      - django-service
+    networks:
+      - yoja-network
+    restart: unless-stopped
+
+  # Celery Beat for Scheduled Tasks
+  celery-beat:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile
+      target: base
+    container_name: yoja-celery-beat
+    command: celery -A yoja_project beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      - DJANGO_SETTINGS_MODULE=yoja_project.settings.development
+      - DATABASE_URL=postgresql://adminYoja:Yoja$#@98342@db:5432/yoja_main
+      - CELERY_BROKER_URL=redis://redis:6379/2
+    volumes:
+      - ./backend/django_service:/app
+      - celery_beat_logs:/app/logs
+    depends_on:
+      - db
+      - redis
+      - django-service
+    networks:
+      - yoja-network
+    restart: unless-stopped
+
+  # Monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: yoja-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - yoja-network
+    restart: unless-stopped
+
+  # Grafana for Dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: yoja-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - yoja-network
+    restart: unless-stopped
+
+# Networks
+networks:
+  yoja-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  postgres_main_data:
+    driver: local
+  postgres_analytics_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  ml_models:
+    driver: local
+  ml_data:
+    driver: local
+  ml_logs:
+    driver: local
+  django_media:
+    driver: local
+  django_static:
+    driver: local
+  django_logs:
+    driver: local
+  fastapi_logs:
+    driver: local
+  celery_logs:
+    driver: local
+  celery_beat_logs:
+    driver: local
+  nginx_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local

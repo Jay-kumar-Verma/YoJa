@@ -1,0 +1,45 @@
+# Fail2ban configuration for ML API security
+[DEFAULT]
+# Ban hosts for 1 hour
+bantime = 3600
+findtime = 600
+maxretry = 5
+backend = auto
+usedns = warn
+logencoding = auto
+enabled = false
+mode = normal
+filter = %(__name__)s[mode=%(mode)s]
+
+[sshd]
+enabled = true
+port = ssh
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 7200
+
+[ml-api-abuse]
+enabled = true
+port = http,https
+filter = ml-api-abuse
+logpath = /var/log/ml-api.log
+maxretry = 10
+findtime = 300
+bantime = 1800
+
+[http-get-dos]
+enabled = true
+port = http,https
+filter = http-get-dos
+logpath = /var/log/ml-api.log
+maxretry = 300
+findtime = 300
+bantime = 600
+action = iptables[name=HTTP, port=http, protocol=tcp]
+
+# Custom filter for ML API abuse
+[Definition]
+failregex = ^<HOST> .* "POST /pose/(analyze|estimate)" .* (400|401|403|429) .*$
+            ^<HOST> .* "POST /upload" .* (400|401|403|413|429) .*$
+            ^<HOST> .* "GET /" .* (404|429) .*$
+ignoreregex = ^<HOST> .* "GET /health" .* 200 .*$

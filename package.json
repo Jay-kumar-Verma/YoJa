@@ -1,0 +1,60 @@
+{
+  "name": "yoja",
+  "version": "1.0.0",
+  "description": "AI-powered yoga assistant with real-time pose detection and correction",
+  "keywords": [
+    "yoga",
+    "ai",
+    "computer-vision",
+    "pose-detection",
+    "machine-learning",
+    "react",
+    "fastapi",
+    "django",
+    "docker",
+    "tensorflow"
+  ],
+  "homepage": "https://github.com/yourusername/YoJa#readme",
+  "bugs": {
+    "url": "https://github.com/yourusername/YoJa/issues"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "YoJa Team",
+    "email": "team@yoja-project.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yourusername/YoJa.git"
+  },
+  "scripts": {
+    "start": "docker-compose up -d",
+    "stop": "docker-compose down",
+    "build": "docker-compose build",
+    "logs": "docker-compose logs -f",
+    "test": "docker-compose exec fastapi-service pytest && docker-compose exec django-service python manage.py test",
+    "clean": "docker system prune -f"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "config": {
+    "ports": {
+      "frontend": 3000,
+      "fastapi": 8000,
+      "django": 8001,
+      "ml": 8888,
+      "postgres": 5432,
+      "redis": 6379,
+      "minio": 9000,
+      "grafana": 3001,
+      "prometheus": 9090
+    }
+  }
+}

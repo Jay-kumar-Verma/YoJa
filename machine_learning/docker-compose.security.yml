@@ -1,0 +1,127 @@
+# Secure Docker Compose override for ML service
+# Use this with: docker-compose -f docker-compose.yml -f docker-compose.security.yml up
+
+version: '3.8'
+
+services:
+  ml-service:
+    # Security-hardened configuration
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    
+    # Resource constraints to prevent DoS
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+          pids: 1000
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    
+    # Network security
+    networks:
+      - ml-network
+    
+    # Read-only root filesystem for security
+    read_only: true
+    
+    # Temporary filesystem for writable areas
+    tmpfs:
+      - /tmp:size=100M,noexec,nosuid,nodev
+      - /var/tmp:size=50M,noexec,nosuid,nodev
+      - /ml/logs:size=200M,noexec,nosuid,nodev
+    
+    # Security environment variables
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - ML_SECURITY_MODE=strict
+      - LOG_LEVEL=INFO
+      - ENABLE_CORS_STRICT=true
+      - MAX_REQUEST_SIZE=5242880
+      - RATE_LIMIT_ENABLED=true
+    
+    # Health check with timeout
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8889/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service,version"
+    
+    # Labels for monitoring and security
+    labels:
+      - "com.yoja.service=ml-api"
+      - "com.yoja.version=1.0"
+      - "com.yoja.security=hardened"
+      - "com.yoja.monitoring=enabled"
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Capabilities - drop all, add only what's needed
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    
+    # User namespace remapping
+    user: "1001:1001"
+    
+    # Additional security options
+    privileged: false
+    stdin_open: false
+    tty: false
+    
+    # Volume mounts with security flags
+    volumes:
+      - ml-models:/ml/models:ro
+      - ml-data:/ml/data:rw,nosuid,nodev,noexec
+      - ml-logs:/ml/logs:rw,nosuid,nodev,noexec
+      - ./security/config.env:/ml/security.conf:ro
+
+networks:
+  ml-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          ip_range: 172.20.240.0/20
+
+volumes:
+  ml-models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,ro
+      device: ./models
+  
+  ml-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,rw,nosuid,nodev,noexec
+      device: ./data
+  
+  ml-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind,rw,nosuid,nodev,noexec
+      device: ./logs

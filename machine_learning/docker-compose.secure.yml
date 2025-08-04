@@ -1,0 +1,271 @@
+# Enhanced Secure Docker Compose for ML Service
+# This configuration provides multiple deployment scenarios with security hardening
+
+version: '3.8'
+
+services:
+  # Development deployment - balanced security and convenience
+  ml-service-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/ml-service:dev-secure
+    container_name: ml-service-dev
+    ports:
+      - "8889:8889"
+    environment:
+      - ENV=development
+      - LOG_LEVEL=debug
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Development volumes for debugging (read-only for security)
+      - ./logs:/app/logs:rw
+      - ./temp:/tmp/ml-temp:rw
+    user: "nonroot:nonroot"
+    read_only: false  # Allow writes for development
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # Only add necessary capabilities
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8889/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ml-network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+        reservations:
+          memory: 1G
+          cpus: '1'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ml-dev.rule=Host(`ml-dev.localhost`)"
+      - "traefik.http.services.ml-dev.loadbalancer.server.port=8889"
+      - "security.level=development"
+      - "monitoring.enable=true"
+
+  # Production deployment - maximum security
+  ml-service-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/ml-service:prod-secure
+    container_name: ml-service-prod
+    ports:
+      - "8889:8889"
+    environment:
+      - ENV=production
+      - LOG_LEVEL=warning
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+      # Security environment variables
+      - SECURE_SSL_REDIRECT=true
+      - SECURE_HSTS_SECONDS=31536000
+      - SECURE_CONTENT_TYPE_NOSNIFF=true
+      - SECURE_BROWSER_XSS_FILTER=true
+    volumes:
+      # Minimal volumes for production
+      - ml-logs:/app/logs:rw
+      - ml-temp:/tmp/ml-temp:rw
+    user: "nonroot:nonroot"
+    read_only: true  # Read-only filesystem for maximum security
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+      - seccomp:seccomp-profile.json
+    cap_drop:
+      - ALL  # Drop all capabilities
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8889/health', timeout=5)"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    networks:
+      - ml-network
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4'
+        reservations:
+          memory: 2G
+          cpus: '2'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ml-prod.rule=Host(`ml.yoja.com`)"
+      - "traefik.http.services.ml-prod.loadbalancer.server.port=8889"
+      - "traefik.http.routers.ml-prod.tls=true"
+      - "traefik.http.routers.ml-prod.tls.certresolver=letsencrypt"
+      - "security.level=production"
+      - "monitoring.enable=true"
+      - "vulnerability.scan=required"
+
+  # Testing deployment - isolated and secure
+  ml-service-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+    image: yoja/ml-service:test-secure
+    container_name: ml-service-test
+    environment:
+      - ENV=testing
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    user: "nonroot:nonroot"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    network_mode: none  # Isolated network for testing
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+    labels:
+      - "security.level=testing"
+      - "isolation.level=maximum"
+
+  # Monitoring and logging (optional)
+  ml-monitor:
+    image: prom/prometheus:latest
+    container_name: ml-monitor
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    user: "nobody"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - ml-network
+    depends_on:
+      - ml-service-prod
+    profiles:
+      - monitoring
+
+  # Log aggregation
+  ml-logger:
+    image: fluent/fluentd:latest
+    container_name: ml-logger
+    volumes:
+      - ./logging/fluentd.conf:/fluentd/etc/fluent.conf:ro
+      - ml-logs:/var/log/ml:ro
+    user: "fluent"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - ml-network
+    profiles:
+      - logging
+
+# Secure network configuration
+networks:
+  ml-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+    labels:
+      - "security.level=isolated"
+      - "network.type=ml-services"
+
+# Persistent volumes with security constraints
+volumes:
+  ml-logs:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=1G,uid=65532,gid=65532,mode=0755
+    labels:
+      - "security.level=logs"
+      - "cleanup.policy=7days"
+
+  ml-temp:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=500M,uid=65532,gid=65532,mode=0755
+    labels:
+      - "security.level=temporary"
+      - "cleanup.policy=1hour"
+
+  prometheus-data:
+    driver: local
+    labels:
+      - "security.level=monitoring"
+      - "backup.policy=weekly"
+
+# Additional security configurations
+x-security-common: &security-common
+  user: "nonroot:nonroot"
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:noexec,nosuid,size=100m
+
+x-healthcheck-common: &healthcheck-common
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# Profiles for different deployment scenarios
+# Usage examples:
+# Development: docker-compose up ml-service-dev
+# Production: docker-compose --profile production up ml-service-prod
+# Testing: docker-compose --profile testing up ml-service-test
+# Full monitoring: docker-compose --profile monitoring --profile logging up

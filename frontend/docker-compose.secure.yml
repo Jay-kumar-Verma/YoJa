@@ -1,0 +1,235 @@
+# Enhanced Secure Docker Compose for Frontend Service
+# Enterprise-grade security deployment configurations
+
+version: '3.8'
+
+services:
+  # Development deployment - React dev server
+  frontend-service-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: secure-builder
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+        - NODE_ENV=development
+    image: yoja/frontend-service:dev-secure
+    container_name: frontend-service-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      # Development volumes for hot reloading
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+      - ./package.json:/app/package.json:ro
+      - node_modules:/app/node_modules
+    user: "reactuser:nodejs"
+    read_only: false  # Allow writes for development
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - frontend-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend-dev.rule=Host(`app-dev.localhost`)"
+      - "traefik.http.services.frontend-dev.loadbalancer.server.port=3000"
+      - "security.level=development"
+      - "monitoring.enable=true"
+    command: ["npm", "start"]
+
+  # Production deployment - Nginx with built React app
+  frontend-service-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+        - NODE_ENV=production
+    image: yoja/frontend-service:prod-secure
+    container_name: frontend-service-prod
+    ports:
+      - "80:80"
+    environment:
+      - NODE_ENV=production
+      - NGINX_WORKER_PROCESSES=auto
+      - NGINX_WORKER_CONNECTIONS=1024
+    user: "nginx:nginx"
+    read_only: true  # Read-only filesystem for maximum security
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+      - /var/cache/nginx:noexec,nosuid,size=100m
+      - /var/run:noexec,nosuid,size=100m
+    security_opt:
+      - no-new-privileges:true
+      - apparmor:docker-default
+    cap_drop:
+      - ALL  # Drop all capabilities
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+      start_period: 30s
+    networks:
+      - frontend-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1'
+        reservations:
+          memory: 256M
+          cpus: '0.5'
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend-prod.rule=Host(`app.yoja.com`)"
+      - "traefik.http.services.frontend-prod.loadbalancer.server.port=80"
+      - "traefik.http.routers.frontend-prod.tls=true"
+      - "traefik.http.routers.frontend-prod.tls.certresolver=letsencrypt"
+      - "security.level=production"
+      - "monitoring.enable=true"
+      - "vulnerability.scan=required"
+
+  # Testing deployment - isolated environment
+  frontend-service-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+        - NODE_ENV=test
+    image: yoja/frontend-service:test-secure
+    container_name: frontend-service-test
+    environment:
+      - NODE_ENV=test
+      - REACT_APP_API_URL=http://test-api:8000
+    user: "nginx:nginx"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    network_mode: none  # Isolated network for testing
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    labels:
+      - "security.level=testing"
+      - "isolation.level=maximum"
+
+  # Static file server for assets (optional)
+  frontend-assets:
+    image: nginx:alpine
+    container_name: frontend-assets
+    volumes:
+      - ./public:/usr/share/nginx/html:ro
+      - ./assets-nginx.conf:/etc/nginx/nginx.conf:ro
+    user: "nginx"
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=50m
+      - /var/cache/nginx:noexec,nosuid,size=50m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    networks:
+      - frontend-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+    labels:
+      - "security.level=assets"
+      - "service.type=static"
+    profiles:
+      - assets
+
+# Secure network configuration
+networks:
+  frontend-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.enable_icc: "false"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+    ipam:
+      config:
+        - subnet: 172.22.0.0/16
+          gateway: 172.22.0.1
+    labels:
+      - "security.level=isolated"
+      - "network.type=frontend-services"
+
+# Persistent volumes with security constraints
+volumes:
+  node_modules:
+    driver: local
+    labels:
+      - "security.level=dependencies"
+      - "cleanup.policy=build"
+
+  frontend-cache:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=500M,uid=1001,gid=1001,mode=0755
+    labels:
+      - "security.level=cache"
+      - "cleanup.policy=1hour"
+
+# Additional security configurations
+x-security-common: &security-common
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:noexec,nosuid,size=50m
+
+x-healthcheck-common: &healthcheck-common
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 30s
+
+# Profiles for different deployment scenarios
+# Usage examples:
+# Development: docker-compose up frontend-service-dev
+# Production: docker-compose --profile production up frontend-service-prod
+# Testing: docker-compose --profile testing up frontend-service-test
+# With assets: docker-compose --profile assets up frontend-service-prod frontend-assets
